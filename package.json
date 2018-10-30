@@ -1,0 +1,48 @@
+{
+  "name": "2017_alexa_trick_or_treat_for_unicef",
+  "version": "1.0.0",
+  "description": "Trick or Treat UNICEF",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://BenJCheng@bitbucket.org/freshdigitalgroup/2017_alexa_trick_or_treat_for_unicef.git"
+  },
+  "devDependencies": {
+    "bespoken-tools": "^1.2.0",
+    "chai": "^3.5.0",
+    "chai-string": "^1.4.0",
+    "eslint": "^3.19.0",
+    "eslint-config-google": "^0.8.0",
+    "eslint-plugin-json": "^1.2.0",
+    "facebook-node": "0.0.3",
+    "gulp": "^3.9.1",
+    "gulp-eslint": "^3.0.1",
+    "gulp-git": "^2.1.0",
+    "gulp-jsbeautifier": "^2.1.0",
+    "gulp-jshint": "^2.0.4",
+    "gulp-mocha": "^4.3.1",
+    "mocha": "^3.4.2",
+    "run-sequence": "^1.2.2"
+  },
+  "dependencies": {
+    "alexa-sdk": "^1.0.20",
+    "aws-sdk": "^2.344.0",
+    "axios": "^0.16.2",
+    "bespoke-tools": "^0.4.6",
+    "dmp": "^1.0.0",
+    "dmp_external_sdk": "git+ssh://git@bitbucket.org/freshdigitalgroup/2017_dmp_external_sdk.git",
+    "dotenv": "^4.0.0",
+    "google-auth-library": "^0.11.0",
+    "googleapis": "^22.2.0",
+    "request": "^2.81.0",
+    "request-promise": "^4.2.0",
+    "zipcode-to-timezone": "0.0.9"
+  },
+  "author": "",
+  "license": "ISC",
+  "homepage": "https://bitbucket.org/freshdigitalgroup/2017_alexa_trick_or_treat_for_unicef#readme"
+}

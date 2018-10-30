@@ -1,0 +1,111 @@
+node{
+    try {
+        stage ('Build') {
+        withCredentials([
+                            usernamePassword(credentialsId: 'aws-token', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD'),
+                            string(credentialsId: 'dmp-development', variable: 'account_id')
+                            //,
+                        //usernamePassword(credentialsId: '2017_Alexa_Trick_Or_Treat_For_Unicef',
+                          //  usernameVariable: 'client_id', passwordVariable: 'client_secret'),
+                         ]) {
+             checkout scm
+             sh '''#!/bin/bash
+             eval `ssh-agent -s`
+             ssh-add ~/.ssh/id_rsa
+             touch ~/.ssh/known_hosts
+             ssh-keyscan -H bitbucket.org >> ~/.ssh/known_hosts
+             rm -r submission include lib RESULT pip-selfcheck.json bin
+             npm install > /dev/null
+             export ENV_VARIABLE=true
+             npm update
+             ls -la
+             # npm test || { `echo fail > RESULT` && exit; }
+             mkdir submission
+             cd submission
+             ls -la
+             cd ..
+             rm Archive.zip
+             zip -X -r submission/index.zip * -x publish.sh submission/* submission index.zip Archive.zip > /dev/null
+             ls -la
+             '''
+            //  def testResult = '';
+            //  if(fileExists('RESULT')) {
+            //      testResult = readFile('RESULT').trim();
+            //  }
+             //if(testResult == 'fail') {
+             //    error('npm test failed');
+             //} else {
+                 archiveArtifacts artifacts: 'submission/index.zip'
+             //}
+        }
+        }
+        stage ('Deploy to AWS'){
+            withCredentials([usernamePassword(credentialsId: 'aws-token',
+                              usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD'),
+                            string(credentialsId: 'dmp-development',
+                                variable: 'account_id')
+                                ,
+                            usernamePassword(credentialsId: '2017_Alexa_Trick_Or_Treat_For_Unicef',
+                                usernameVariable: 'client_id', passwordVariable: 'client_secret')
+                                ]){
+                sh script:'''#!/bin/bash -xe
+                virtualenv .
+                . ./bin/activate
+                cd submission
+                python -m pip install --upgrade awscli
+                fname='2017_Alexa_Trick_Or_Treat_For_Unicef'
+                aws configure set aws_access_key_id $USERNAME --profile DeleteRole
+                aws configure set aws_secret_access_key $PASSWORD --profile DeleteRole
+                aws configure set region 'us-east-1' --profile DeleteRole
+                aws configure set output json --profile DeleteRole
+                functionNum=`aws lambda list-versions-by-function --function-name $fname | jq '.Versions | length'`
+                if [ $functionNum -gt 10 ]; then
+                startNum=`awscli lambda list-versions-by-function --function-name $fname | jq '.Versions[1].Version' | awk '{gsub(/[",]/, "", $1);print $1}'`
+                for (( i=$startNum; i < $startNum + $functionNum - 10; ++i ))
+                do
+                aws lambda delete-function --function-name $fname --qualifier "$i" --profile DeleteRole
+                done
+                fi
+                aws configure set aws_access_key_id $USERNAME --profile default
+                aws configure set aws_secret_access_key $PASSWORD --profile default
+                aws configure set role_arn arn:aws:iam::679125658632:role/AlexaDeveloperRole --profile default
+                aws configure set role_session_name AlexaDeveloperRole --profile default
+                aws configure set region 'us-east-1' --profile default
+                aws configure set output json --profile default
+                aws configure set source_profile default --profile default
+                aws lambda update-function-code --function-name $fname --zip-file fileb://index.zip --profile default| grep Version | awk \'{gsub(/[",]/, "", $2); print $2}\'
+                version=`aws lambda publish-version --function-name $fname --profile default| grep Version | awk \'{gsub(/[",]/, "", $2); print $2}\'`
+                aws lambda update-alias --function-name $fname --name LIVE --function-version $version --profile default ||
+                aws lambda create-alias --function-name $fname --name LIVE --function-version $version --profile default
+                if [ $? == 255 ]; then aws lambda create-alias --function-name $fname --name LIVE --function-version $version --profile default; fi
+                deactivate'''
+            }
+        }
+    } catch (e) {
+        currentBuild.result = "FAILURE"
+        throw e
+    } finally {
+        if(currentBuild.number == 1) {
+            notifyBuild(currentBuild.result)
+        } else {
+            if(currentBuild.result != currentBuild.previousBuild.result || currentBuild.result != "FAILURE") {
+                notifyBuild(currentBuild.result)
+            }
+        }
+
+    }
+}
+def notifyBuild(buildStatus) {
+    buildStatus =  buildStatus ?: 'SUCCESS'
+    def summary = ""
+    if (buildStatus == 'SUCCESS') {
+        color = 'GREEN'
+        colorCode = '#00FF00'
+        summary = "Publish ${env.JOB_NAME} Success"
+    } else {
+        color = 'RED'
+        colorCode = '#FF0000'
+        summary = "Publish ${env.JOB_NAME} Fail"
+    }
+    slackSend (color: colorCode, message: summary)
+}

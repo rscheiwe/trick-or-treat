@@ -1,0 +1,184 @@
+// Let's start create the Jenkins file which build and deploy our skills
+node{
+    try {
+        // Here we build the required files and archive them if necessary
+        stage ('Build') {
+            // The checkout step will checkout code from source control
+             checkout scm
+             sh '''#!/bin/bash
+             eval `ssh-agent -s`
+             ssh-add ~/.ssh/id_rsa
+             touch ~/.ssh/known_hosts
+             ssh-keyscan -H bitbucket.org >> ~/.ssh/known_hosts
+
+             # Install the node js packages
+             npm install > /dev/null
+             npm update
+             export ENV_VARIABLE=true
+             rm RESULT
+
+             # Run the test cases
+             npm test || { `echo fail > RESULT` && exit; }
+
+             # Zip the files that we need to submit (Remeber to exclude unnecessary files)
+             mkdir submission
+             rm Archive.zip
+             rm submission/index.zip
+             rm -r bin include lib pip-selfcheck.json
+             zip -X -r submission/index.zip * \
+             -x publish.sh submission/* submission document.json index.zip > /dev/null
+             '''
+
+             // Record the test result
+             def testResult = '';
+             if(fileExists('RESULT')) {
+                 testResult = readFile('RESULT').trim();
+             }
+             if(testResult == 'fail') {
+                 error('npm test failed');
+             } else {
+                 archiveArtifacts artifacts: 'submission/index.zip'
+             }
+         }
+
+         // Deploy to the aws platform
+         stage ('Deploy to AWS'){
+
+             // Retrieve credientials from Jenkins builtin
+             withCredentials([usernamePassword(credentialsId: 'aws-token',
+                usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD'),]
+            ){
+             sh script:'''#!/bin/bash +x
+             virtualenv .
+             . ./bin/activate
+
+             # Set up environment variable. Remeber to change them when switch to stage or live
+             cd submission
+             profile=AlexaDeveloper
+             fname=2017_Alexa_Trick_Or_Treat_For_Unicef
+             account_id=75e0753e-2e08-4d8d-9c7d-5a65824e828c
+             if [ "$BRANCH_NAME" == "master" ]; then
+                 alias=LIVE
+                 other=staging
+                 mode=live
+                 Token_uri=http://management.beyondvoice.freshdigitalgroup.com
+                 Reg_uri=http://api.beyondvoice.freshdigitalgroup.com/v1/management/accounts
+             else
+                alias=staging
+                other=LIVE
+                mode=sandbox
+                Token_uri=management.sandbox.beyondvoice.freshdigitalgroup.com
+                Reg_uri=http://api.sandbox.beyondvoice.freshdigitalgroup.com/v1/management/accounts
+             fi
+             # Get access token to have the key to our DMP system
+            access_token=`curl -d "client_id=f1e272bf98e58ac8ec064cb953b9d02ceaee972ab8558b8d3653038863154514&\
+              client_secret=98aa480b1565c7f218d7333553dc6beb0cc7329a215531a072dc6bfa0b94565d&\
+              redirect_uri=${Token_uri}/oauth/applications&\
+              grant_type=client_credentials&\
+              code=CODE" ${Token_uri}/oauth/token \
+              | jq '.access_token' \
+              | awk '{gsub(/[",]/, "", $1);print $1}'`
+
+              # Get the bots list and certain bot id
+             botList=`curl -X GET --header 'Accept: application/json' \
+             --header "Authorization: Bearer $access_token" \
+             ${Reg_uri}/${account_id}/bots`
+
+             bot_id=`echo $botList | jq --arg f "$fname" '.data | .[] | select(.name==$f) | .id' \
+             | awk '{gsub(/[",]/, "", $1);print $1}'`
+
+             # Check if our bot exists or not, if exist get info, if not create a new one
+            if [ -z $bot_id]; then
+              bot_info=$(curl -X POST -H "Content-Type:application/json" \
+              -H "Authorization: Bearer $access_token" \
+              -d '{"name":"'"$fname"'","application":{"scopes":"public","redirect_uri":"https://fdg.beyondvoice.freshdigitalgroup.com"}}' \
+              ${Reg_uri}/${account_id}/bots)
+            else
+              bot_info=$(curl -X GET --header 'Accept: application/json' \
+              --header "Authorization: Bearer $access_token" \
+              ${Reg_uri}/${account_id}/bots/${bot_id})
+            fi
+
+            # Get the client_id and client_secret which will be push to our lambda function
+            client_id=`echo $bot_info | jq '.data|.oauth_application|.uid' | awk '{gsub(/[",]/, "", $1);print $1}'`
+            client_secret=`echo $bot_info | jq '.data|.oauth_application|.secret' | awk '{gsub(/[",]/, "", $1);print $1}'`
+
+             # GET Total number of functions
+             functionNum=`aws lambda list-versions-by-function \
+             --function-name $fname --profile $profile \
+             | jq '.Versions | length'`
+
+
+             # Update function or create a new one if not exits
+             { aws lambda update-function-code --function-name $fname \
+             --profile $profile --zip-file fileb://index.zip \
+             || aws lambda create-function --function-name $fname \
+             --profile $profile --runtime 'nodejs6.10' --timeout 30 \
+             --environment "Variables={account_id=$account_id, client_id=$client_id, client_secret=$client_secret, dmp_mode=$mode}" \
+             --role arn:aws:iam::679125658632:role/lambda_basic_execution \
+             --handler 'index.handler' --zip-file fileb://$fname.zip; } \
+             | grep Version | awk \'{gsub(/[",]/, "", $2); print $2}\'
+
+             aws lambda update-function-configuration --function-name $fname --profile $profile \
+             --environment "Variables={account_id=$account_id, client_id=$client_id, client_secret=$client_secret, dmp_mode=$mode}" >/dev/null
+
+             # Publish a new version and get the new version number
+             version=`aws lambda publish-version --function-name $fname --profile $profile \
+             | grep Version | awk \'{gsub(/[",]/, "", $2); print $2}\'`
+
+             # Point the LIVE function to the newly updated one
+             aws lambda update-alias --function-name $fname --name $alias \
+             --profile $profile --function-version $version || \
+             aws lambda create-alias --function-name $fname --name $alias \
+             --profile $profile --function-version $version >/dev/null
+
+             if [ $? == 255 ]; then
+                aws lambda create-alias --function-name $fname --profile $profile \
+                --name $alias --function-version $version;
+             fi
+
+             # Avoid delete other alias function versions
+             OtherVersion=`echo $(aws lambda list-aliases --function-name $fname --profile $profile) \
+             | jq --arg temp "$other" '.Aliases|.[]|select(.Name==$temp)|.FunctionVersion' | awk '{gsub(/[",]/, "", $1);print $1}'`
+
+             # Delete the exceeded function versions
+             if [ $functionNum -gt 5 ]; then
+                 startNum=`aws lambda list-versions-by-function --function-name $fname --profile $profile \
+                 | jq '.Versions[1].Version' | awk '{gsub(/[",]/, "", $1);print $1}'`
+                 for (( i=$startNum; i < $startNum + $functionNum - 5; ++i ))
+                 do
+                 if test $i -ne $OtherVersion
+                 then
+                    aws lambda delete-function --function-name $fname --qualifier "$i" --profile DeleteRole
+                 fi
+                 done
+             fi
+
+             deactivate'''
+             }
+         }
+    } catch (e) {
+        currentBuild.result = "FAILURE"
+        throw e
+    } finally {
+        if(currentBuild.result != currentBuild.previousBuild.result || currentBuild.result != "FAILURE") {
+            notifyBuild(currentBuild.result)
+        }
+    }
+}
+
+// Notify the slack success or fail
+def notifyBuild(buildStatus) {
+    buildStatus =  buildStatus ?: 'SUCCESS'
+    def summary = ""
+    if (buildStatus == 'SUCCESS') {
+        color = 'GREEN'
+        colorCode = '#00FF00'
+        summary = "Publish ${env.JOB_NAME} Success"
+    } else {
+        color = 'RED'
+        colorCode = '#FF0000'
+        summary = "Publish ${env.JOB_NAME} Fail"
+    }
+    slackSend (color: colorCode, message: summary)
+}
