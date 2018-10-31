@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "bstproxy": "ps aux | grep -v grep | grep 'bst-proxy.js http' || ./inwin bst proxy http 3000",
+    "start": "node index --webhook"
   },
   "repository": {
     "type": "git",
@@ -22,7 +23,7 @@
     "gulp": "^3.9.1",
     "gulp-eslint": "^3.0.1",
     "gulp-git": "^2.1.0",
-    "gulp-jsbeautifier": "^2.1.0",
+    "gulp-jsbeautifier": "^2.1.2",
     "gulp-jshint": "^2.0.4",
     "gulp-mocha": "^4.3.1",
     "mocha": "^3.4.2",
@@ -34,15 +35,19 @@
     "axios": "^0.16.2",
     "bespoke-tools": "^0.4.6",
     "dmp": "^1.0.0",
-    "dmp_external_sdk": "git+ssh://git@bitbucket.org/freshdigitalgroup/2017_dmp_external_sdk.git",
     "dotenv": "^4.0.0",
     "google-auth-library": "^0.11.0",
     "googleapis": "^22.2.0",
-    "request": "^2.81.0",
+    "jovo": "0.0.1",
+    "jovo-framework": "^1.4.12",
+    "request": "^2.88.0",
     "request-promise": "^4.2.0",
     "zipcode-to-timezone": "0.0.9"
   },
   "author": "",
   "license": "ISC",
-  "homepage": "https://bitbucket.org/freshdigitalgroup/2017_alexa_trick_or_treat_for_unicef#readme"
+  "homepage": "https://bitbucket.org/freshdigitalgroup/2017_alexa_trick_or_treat_for_unicef#readme",
+  "directories": {
+    "doc": "docs"
+  }
 }
